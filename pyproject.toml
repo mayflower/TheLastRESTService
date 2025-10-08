@@ -8,3 +8,8 @@ dependencies = [
     "pydantic-settings>=2.11.0",
     "uvicorn[standard]>=0.37.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+]
