@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import ast
-from typing import Any, Dict, Optional
+from typing import Any
+
 
 _ALLOWED_NODES = {
     ast.Module,
@@ -63,6 +64,8 @@ _ALLOWED_NODES = {
     ast.Return,
     ast.Raise,
     ast.NamedExpr,
+    ast.JoinedStr,  # f-strings
+    ast.FormattedValue,  # f-string expressions
 }
 
 _DISALLOWED_NODES = (
@@ -85,7 +88,7 @@ _DISALLOWED_NODES = (
 
 _DISALLOWED_NAMES = {"__import__", "eval", "exec", "open", "compile"}
 
-_ALLOWED_BUILTINS: Dict[str, Any] = {
+_ALLOWED_BUILTINS: dict[str, Any] = {
     "len": len,
     "range": range,
     "enumerate": enumerate,
@@ -152,15 +155,17 @@ def validate_code(source: str) -> None:
     _ensure_allowed(tree)
 
 
-def safe_exec(source: str, globals_dict: dict[str, Any], locals_dict: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+def safe_exec(
+    source: str, globals_dict: dict[str, Any], locals_dict: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Execute code using sandbox safe guards."""
 
     validate_code(source)
 
-    sandbox_globals: Dict[str, Any] = {"__builtins__": _ALLOWED_BUILTINS}
+    sandbox_globals: dict[str, Any] = {"__builtins__": _ALLOWED_BUILTINS}
     sandbox_globals.update(globals_dict)
 
-    sandbox_locals: Dict[str, Any]
+    sandbox_locals: dict[str, Any]
     if locals_dict is None:
         sandbox_locals = {}
     else:

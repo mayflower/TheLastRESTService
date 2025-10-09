@@ -7,7 +7,8 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from typing import Any, Dict, List, Mapping, Optional, TypedDict
+from collections.abc import Mapping
+from typing import Any, TypedDict
 
 from fastapi import Depends, Request
 from fastapi.responses import JSONResponse, Response
@@ -16,23 +17,24 @@ from .errors import SandboxExecutionError
 from .sandbox import SandboxManager, SandboxResponse
 from .security import SessionContext, session_dependency
 
+
 logger = logging.getLogger(__name__)
 
 
 class RequestContext(TypedDict, total=False):
     method: str
     path: str
-    segments: List[str]
-    query: Dict[str, List[str]]
-    headers: Dict[str, str]
+    segments: list[str]
+    query: dict[str, list[str]]
+    headers: dict[str, str]
     body_json: Any
-    body_raw: Optional[bytes]
-    client: Dict[str, Optional[str]]
-    session: Dict[str, Optional[str]]
+    body_raw: bytes | None
+    client: dict[str, str | None]
+    session: dict[str, str | None]
     request_id: str
 
 
-def _normalize_headers(headers: Mapping[str, str]) -> Dict[str, str]:
+def _normalize_headers(headers: Mapping[str, str]) -> dict[str, str]:
     return {key.title(): value for key, value in headers.items()}
 
 
@@ -52,7 +54,9 @@ async def build_request_context(
             try:
                 body_json = json.loads(raw_body.decode("utf-8"))
             except json.JSONDecodeError as exc:
-                raise SandboxExecutionError("Invalid JSON in request body", status_code=400) from exc
+                raise SandboxExecutionError(
+                    "Invalid JSON in request body", status_code=400
+                ) from exc
 
     request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
 
@@ -85,7 +89,9 @@ async def handle_request(
     """Entry point for the catch-all FastAPI route."""
 
     ctx = await build_request_context(request, full_path, session)
-    logger.info("request_received", extra={"request_id": ctx["request_id"], "session_id": session.id})
+    logger.info(
+        "request_received", extra={"request_id": ctx["request_id"], "session_id": session.id}
+    )
 
     try:
         sandbox_response: SandboxResponse = await sandbox_manager.execute_planned(ctx)
@@ -97,6 +103,14 @@ async def handle_request(
 
     headers = sandbox_response.headers or {}
     headers.setdefault("X-Request-ID", ctx["request_id"])
+
+    # 204 No Content should have empty body
+    if sandbox_response.status == 204:
+        return Response(
+            content=b"",
+            status_code=204,
+            headers=headers,
+        )
 
     if sandbox_response.is_json:
         return JSONResponse(

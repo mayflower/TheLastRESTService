@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-import textwrap
+import json
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-_SUPPORTED_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE"}
+from .llm_client import LLMClientError, call_llm
+
+
 _RESOURCE_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
@@ -14,7 +16,114 @@ class PlanningError(ValueError):
     """Raised when the router cannot derive a plan from the request context."""
 
 
-def _validate_resource(segments: List[str]) -> str:
+def _build_prompt(ctx: dict[str, Any]) -> str:
+    """Build the LLM prompt from request context."""
+
+    # Create a serializable copy of context (exclude bytes)
+    ctx_copy = {k: v for k, v in ctx.items() if k != "body_raw"}
+    ctx_json = json.dumps(ctx_copy, indent=2)
+
+    return f"""You are a REST Planner. Analyze the HTTP request and return ONLY a JSON object (no other text).
+
+The JSON MUST have these exact fields:
+- "action": one of "create", "get", "list", "replace", "patch", "delete", or "search"
+- "resource": the collection name (first path segment)
+- "identifier": the ID from path (or null)
+- "criteria": {{}} (empty object)
+- "payload": the request body (or {{}})
+- "response_hints": {{}}
+- "code": {{"language": "python", "block": "```python\\n...\\n```"}}
+
+The code block must:
+- Use `store` (ResourceStore API), `ctx` (request context), `plan`, and `make_response(status, body, headers)`
+- Set a variable called `REPLY` using make_response()
+- `make_response` signature: `make_response(status: int, body=None, headers=None)` (ONLY these 3 args, headers is a dict)
+- For POST /resource/ → `body = ctx.get("body_json"); rec = store.insert(body); REPLY = make_response(201, rec, {{"Location": f"/resource/{{rec['id']}}"}})`
+- For GET /resource/<id> → get by plan["identifier"] and return 200 or 404
+- For DELETE /resource/<id> → delete and return `make_response(204, None, {{}})` (204 with no body) or 404
+- For PUT /resource/<id> → replace and return 200 or 404
+- For PATCH /resource/<id> → update and return 200 or 404
+- For GET /resource/ → list with pagination from query params
+- For GET /resource/search?key=val → search with query params
+
+IMPORTANT: In the "block" field, write the Python code directly WITHOUT any markdown fencing (no ``` or ```python). Just the raw Python code.
+
+**SCHEMA:**
+
+```json
+{{
+  "action": "create|get|list|replace|patch|delete|search",
+  "resource": "<collection name>",
+  "identifier": null,
+  "criteria": {{}},
+  "payload": {{}},
+  "response_hints": {{}},
+  "code": {{
+    "language": "python",
+    "block": "REPLY = make_response(200, {{}})"
+  }}
+}}
+```
+
+**Rules:**
+
+* Collection name defaults to the first path segment (e.g., `/members/...` → `"members"`).
+* `identifier` is the second segment if present and not `"search"`.
+* `/.../search` should set `action: "search"`; parse filters from query params.
+* `POST /<collection>/` → `action: "create"`.
+* `GET /<collection>/` → `action: "list"`.
+* `GET /<collection>/<id>` → `action: "get"`.
+* `PUT /<collection>/<id>` → `action: "replace"`.
+* `PATCH /<collection>/<id>` → `action: "patch"`.
+* `DELETE /<collection>/<id>` → `action: "delete"`.
+* If body lacks an `id` on create, the code should call `store.insert(payload)` and use the returned id.
+* Your code must use **only** the provided `store` object, `ctx`, `plan`, and `make_response` function. Return a **Python dict** assigned to variable `REPLY` with structure: `{{"status": int, "body": <obj>, "headers": {{}}, "is_json": bool}}`. Do not print; just assign to REPLY.
+
+**Examples:**
+
+* `POST /members/` with body `{{"name": "Alice"}}` → insert into members, 201, `Location: /members/{{id}}`, return object with id.
+* `GET /members/1` → return object or 404.
+* `DELETE /members/1` → 204.
+* `GET /members/search?name=hartmann` → filter all where name == "hartmann".
+
+**REQUEST CONTEXT:**
+
+{ctx_json}
+
+**Now output only the JSON object per the schema above. Ensure the "code" field contains a single fenced Python code block that assigns REPLY.**"""
+
+
+def _extract_code_from_plan(plan_obj: dict[str, Any]) -> str:
+    """Extract the Python code block from the LLM plan."""
+
+    code_section = plan_obj.get("code")
+    if not isinstance(code_section, dict):
+        raise PlanningError("Plan missing 'code' section")
+
+    block = code_section.get("block", "")
+    if not isinstance(block, str):
+        raise PlanningError("Code block is not a string")
+
+    # Remove any markdown fencing if present (though we asked LLM not to include it)
+    code = block.strip()
+    if code.startswith("```python"):
+        code = code[len("```python") :].strip()
+    elif code.startswith("```"):
+        code = code[3:].strip()
+
+    if code.endswith("```"):
+        code = code[:-3].strip()
+
+    return code
+
+
+def plan(ctx: dict[str, Any]) -> dict[str, Any]:
+    """Produce a plan by calling the LLM with the request context."""
+
+    method = (ctx.get("method") or "GET").upper()
+    segments = list(ctx.get("segments") or [])
+
+    # Validate resource name
     if not segments:
         raise PlanningError("Resource path is required")
     resource = segments[0]
@@ -22,156 +131,64 @@ def _validate_resource(segments: List[str]) -> str:
         raise PlanningError("Resource name is empty")
     if not _RESOURCE_PATTERN.match(resource):
         raise PlanningError("Invalid resource name")
-    return resource
 
+    # Build prompt and call LLM
+    prompt = _build_prompt(ctx)
 
-def _determine_action(method: str, segments: List[str]) -> Dict[str, Any]:
-    identifier: Optional[str] = None
-    search = False
+    try:
+        llm_response = call_llm(prompt)
+    except LLMClientError as exc:
+        raise PlanningError(f"LLM call failed: {exc}") from exc
 
-    if len(segments) >= 2:
-        if segments[1] == "search":
-            search = True
-        else:
-            identifier = segments[1]
+    # Parse JSON response
+    # LLM might wrap in markdown, extract JSON
+    response_text = llm_response.strip()
 
-    if method == "POST" and not identifier and not search:
-        action = "create"
-    elif method == "GET" and search:
-        action = "search"
-    elif method == "GET" and identifier:
-        action = "retrieve"
-    elif method == "GET" and not identifier:
-        action = "list"
-    elif method == "DELETE" and identifier:
-        action = "delete"
-    elif method == "PUT" and identifier:
-        action = "replace"
-    elif method == "PATCH" and identifier:
-        action = "update"
-    else:
-        raise PlanningError("Unsupported combination of method and path")
+    # Try to extract JSON from markdown fence
+    original_response = response_text
+    if "```json" in response_text:
+        start = response_text.find("```json") + len("```json")
+        end = response_text.find("```", start)
+        if end != -1:
+            response_text = response_text[start:end].strip()
+    elif "```" in response_text:
+        start = response_text.find("```") + 3
+        end = response_text.find("```", start)
+        if end != -1:
+            response_text = response_text[start:end].strip()
 
-    return {"action": action, "identifier": identifier, "search": search}
+    # If the response_text is still empty or doesn't look like JSON, use original
+    if not response_text or not response_text.startswith("{"):
+        response_text = original_response
 
+    try:
+        plan_obj = json.loads(response_text)
+    except json.JSONDecodeError as exc:
+        # Try to find JSON object in the response
 
-def _code_for_action(resource: str, action: str) -> str:
-    prefix_literal = repr("/" + resource + "/")
+        # Just use the original response and let it fail properly
+        raise PlanningError(
+            f"LLM returned invalid JSON: {exc}. Response: {response_text[:1000]}"
+        ) from exc
 
-    if action == "create":
-        return textwrap.dedent(
-            f"""
-            body = ctx.get("body_json")
-            if not isinstance(body, dict):
-                raise ValueError("Expected JSON object body")
-            record = store.insert(dict(body))
-            location = {prefix_literal} + str(record["id"])
-            headers = {{"Content-Type": "application/json", "Location": location}}
-            REPLY = make_response(201, record, headers=headers)
-            """
-        )
-    if action == "retrieve":
-        return textwrap.dedent(
-            """
-            record = store.get(plan.get("identifier"))
-            if record is None:
-                REPLY = make_response(404, {"error": "not found"})
-            else:
-                REPLY = make_response(200, record)
-            """
-        )
-    if action == "delete":
-        return textwrap.dedent(
-            """
-            deleted = store.delete(plan.get("identifier"))
-            if not deleted:
-                REPLY = make_response(404, {"error": "not found"})
-            else:
-                REPLY = make_response(204, None, headers={}, is_json=False)
-            """
-        )
-    if action == "replace":
-        return textwrap.dedent(
-            """
-            body = ctx.get("body_json")
-            if not isinstance(body, dict):
-                raise ValueError("Expected JSON object body")
-            record = store.replace(plan.get("identifier"), dict(body))
-            if record is None:
-                REPLY = make_response(404, {"error": "not found"})
-            else:
-                REPLY = make_response(200, record)
-            """
-        )
-    if action == "update":
-        return textwrap.dedent(
-            """
-            body = ctx.get("body_json")
-            if not isinstance(body, dict):
-                raise ValueError("Expected JSON object body")
-            record = store.update(plan.get("identifier"), dict(body))
-            if record is None:
-                REPLY = make_response(404, {"error": "not found"})
-            else:
-                REPLY = make_response(200, record)
-            """
-        )
-    if action == "list":
-        return textwrap.dedent(
-            """
-            query = ctx.get("query") or {}
-            raw_limit = (query.get("limit") or [None])[0]
-            raw_offset = (query.get("offset") or [0])[0]
-            raw_sort = (query.get("sort") or [None])[0]
+    if not isinstance(plan_obj, dict):
+        raise PlanningError("LLM response is not a JSON object")
 
-            limit = int(raw_limit) if raw_limit not in (None, "") else None
-            offset = int(raw_offset) if raw_offset not in (None, "") else 0
+    # Extract and validate required fields
+    action = plan_obj.get("action")
+    resource_from_plan = plan_obj.get("resource", resource)
+    identifier = plan_obj.get("identifier")
 
-            items, total = store.list(limit=limit, offset=offset, sort=raw_sort)
-            page = {
-                "limit": limit if limit is not None else len(items),
-                "offset": offset,
-                "total": total,
-            }
-            REPLY = make_response(200, {"items": items, "page": page})
-            """
-        )
-    if action == "search":
-        return textwrap.dedent(
-            """
-            query = ctx.get("query") or {}
-            criteria = {}
-            for key, values in query.items():
-                if not values:
-                    continue
-                if key in {"limit", "offset", "sort"}:
-                    continue
-                criteria[key] = values[-1]
+    if not action:
+        raise PlanningError(f"Plan missing 'action' field. Keys present: {list(plan_obj.keys())}")
 
-            matches = list(store.search(criteria))
-            REPLY = make_response(200, matches)
-            """
-        )
-
-    raise PlanningError(f"Unsupported action: {action}")
-
-
-def plan(ctx: Dict[str, Any]) -> Dict[str, Any]:
-    """Produce a plan skeleton for the incoming request."""
-
-    method = (ctx.get("method") or "GET").upper()
-    if method not in _SUPPORTED_METHODS:
-        raise PlanningError("HTTP method not supported")
-
-    segments = list(ctx.get("segments") or [])
-    resource = _validate_resource(segments)
-    action_info = _determine_action(method, segments)
-    code = _code_for_action(resource, action_info["action"])
+    # Extract code
+    code = _extract_code_from_plan(plan_obj)
 
     return {
-        "action": action_info["action"],
-        "resource": resource,
-        "identifier": action_info["identifier"],
-        "search": action_info["search"],
+        "action": action,
+        "resource": resource_from_plan,
+        "identifier": identifier,
+        "search": plan_obj.get("search", False),
         "code": code,
     }
