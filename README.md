@@ -14,6 +14,8 @@ This service implements a novel approach to REST APIs: instead of pre-defining e
 
 **Key Principle**: The API process **never** executes untrusted code. All code generation and execution happens inside the sandbox, which has strict security boundaries.
 
+📖 **See [EXAMPLES.md](EXAMPLES.md) for detailed usage examples and step-by-step walkthroughs.**
+
 ## Architecture
 
 ```
