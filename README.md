@@ -1,10 +1,10 @@
-# The Last REST Service™
+# The Last REST Service™ (LARS)
 
 ## Finally: A Microservice That Writes Itself
 
 Stop wasting precious developer hours writing boilerplate CRUD endpoints. Stop arguing about API design. Stop maintaining OpenAPI specs that are outdated the moment you write them.
 
-**Introducing the Dynamic REST Metaservice** — the only HTTP service you'll ever need to deploy. Just tell it what you want. In plain REST. It figures out the rest.
+**Introducing LARS (The Last REST Service)** — the only HTTP service you'll ever need to deploy. Just tell it what you want. In plain REST. It figures out the rest.
 
 ### The Revolutionary Approach to API Development
 
@@ -226,7 +226,7 @@ export LARS_MAX_EXEC_MS=8000
 export LARS_MAX_RESULT_BYTES=32768
 ```
 
-### Running the Service
+### Running LARS
 
 ```bash
 # Development
