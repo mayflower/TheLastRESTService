@@ -484,3 +484,54 @@ def test_case_insensitive_search(make_client) -> None:
     results = response.json()
     assert isinstance(results, list)
     assert len(results) >= 1
+
+
+def test_swagger_generation(make_client) -> None:
+    """Test dynamic OpenAPI spec generation based on learned schemas."""
+    client = _make_session_client(make_client, "swagger")
+
+    # Initially, /swagger.json should return minimal spec (no resources discovered)
+    response = client.get("/swagger.json")
+    assert response.status_code == 200
+    spec = response.json()
+    assert spec["openapi"] in ["3.0.0", "3.1.0"]  # Accept either OpenAPI version
+    assert "The Last REST Service™" in spec["info"]["title"]
+    assert "paths" in spec
+    assert "components" in spec
+
+    # Create some resources to populate the schema
+    response = client.post(
+        "/users",
+        json={"name": "Alice", "email": "alice@example.com", "role": "admin", "active": True},
+    )
+    assert response.status_code == 201
+
+    response = client.post(
+        "/products",
+        json={"sku": "PROD-001", "name": "Widget", "price": 29.99, "category": "tools"},
+    )
+    assert response.status_code == 201
+
+    # Now /swagger.json should include discovered resources
+    response = client.get("/swagger.json")
+    assert response.status_code == 200
+    spec = response.json()
+
+    # Check paths are generated for discovered resources
+    assert "/users" in spec["paths"]
+    assert "/users/{id}" in spec["paths"]
+    assert "/users/search" in spec["paths"]
+    assert "/products" in spec["paths"]
+    assert "/products/{id}" in spec["paths"]
+
+    # Verify operations are present
+    assert "get" in spec["paths"]["/users"]
+    assert "post" in spec["paths"]["/users"]
+    assert "get" in spec["paths"]["/users/{id}"]
+    assert "put" in spec["paths"]["/users/{id}"]
+    assert "patch" in spec["paths"]["/users/{id}"]
+    assert "delete" in spec["paths"]["/users/{id}"]
+
+    # Check schemas are generated
+    assert "schemas" in spec["components"]
+    assert "Users" in spec["components"]["schemas"] or "users" in spec["components"]["schemas"]

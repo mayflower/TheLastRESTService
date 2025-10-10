@@ -365,6 +365,52 @@ curl -X POST http://localhost:8000/members/ \
   -d '{"name": "Alice"}'
 ```
 
+### Dynamic OpenAPI/Swagger Spec
+
+The service generates a session-specific OpenAPI 3.1 specification based on what YOU have actually used:
+
+```bash
+curl http://localhost:8000/swagger.json \
+  -H "X-Session-ID: my-session"
+```
+
+**What makes this special:**
+- **Session-Aware**: Each session sees a different spec based on their resource usage
+- **Schema Learning**: Automatically generates schemas from your first POST to each resource
+- **Auto-Discovery**: Documents all resources you've created with full CRUD operations
+- **Always Up-to-Date**: Reflects the current state of your session's learned schemas
+
+The generated spec includes:
+- All discovered resources (`/users`, `/products`, etc.)
+- Complete REST operations (GET, POST, PUT, PATCH, DELETE)
+- Search endpoints with wildcard documentation
+- Type-inferred schemas from your actual data
+- Ironic but accurate descriptions (because we can't help ourselves)
+
+**Example**: After POSTing to `/users` and `/products`, your `/swagger.json` will include:
+- `GET/POST /users` with your exact user schema
+- `GET/PUT/PATCH/DELETE /users/{id}`
+- `GET /users/search?<field>=<value>` with wildcard support
+- Same for `/products` and any other resources you've created
+- The catch-all `/{resource}` for everything else
+
+Try it:
+```bash
+# Create some resources
+curl -X POST http://localhost:8000/users \
+  -H "X-Session-ID: demo" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Alice", "email": "alice@example.com", "role": "admin"}'
+
+# View your personalized API spec
+curl http://localhost:8000/swagger.json -H "X-Session-ID: demo" | jq
+```
+
+You can also access the root endpoint for helpful hints:
+```bash
+curl http://localhost:8000/
+```
+
 ## Real-World Usage Examples
 
 These examples demonstrate complete workflows based on actual integration tests.
