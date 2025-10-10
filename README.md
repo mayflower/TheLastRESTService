@@ -198,7 +198,8 @@ Each request is bound to a session (via `X-Session-ID` header or derived from au
 
 ```bash
 # Clone the repository
-cd larstmicroservice
+git clone git@github.com:mayflower/TheLastRESTService.git
+cd TheLastRESTService
 
 # Install dependencies (using uv)
 uv sync
