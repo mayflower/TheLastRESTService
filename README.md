@@ -84,7 +84,7 @@ No endpoints are predefined. The LLM interprets patterns like:
 
 ### Stateful Sessions
 
-Each request is bound to a session (via `X-Session-ID` header or derived from auth token). Session state persists between requests, storing JSON collections in memory.
+Each request is bound to a session (via `X-Session-ID` header or derived from auth token). Session state persists between requests, storing JSON collections as files in `/tmp/sandbox_data/<session-id>/`.
 
 ### Security Boundaries
 
@@ -282,6 +282,497 @@ curl -X POST http://localhost:8000/members/ \
   -d '{"name": "Alice"}'
 ```
 
+## Real-World Usage Examples
+
+These examples demonstrate complete workflows based on actual integration tests.
+
+### Blog Management Workflow
+
+Complete blog post lifecycle with session isolation:
+
+```bash
+# Use a unique session ID for your blog session
+SESSION="blog-$(uuidgen)"
+
+# 1. Create a blog post
+curl -X POST http://localhost:8000/posts \
+  -H "Content-Type: application/json" \
+  -H "X-Session-ID: $SESSION" \
+  -d '{
+    "title": "Getting Started with Dynamic REST",
+    "author": "Alice",
+    "content": "This microservice uses LLMs to handle any REST endpoint..."
+  }'
+
+# Response: 201 Created
+# {
+#   "id": 1,
+#   "title": "Getting Started with Dynamic REST",
+#   "author": "Alice",
+#   "content": "This microservice uses LLMs to handle any REST endpoint..."
+# }
+
+# 2. Retrieve the post
+curl http://localhost:8000/posts/1 \
+  -H "X-Session-ID: $SESSION"
+
+# Response: 200 OK
+# {
+#   "id": 1,
+#   "title": "Getting Started with Dynamic REST",
+#   "author": "Alice",
+#   "content": "This microservice uses LLMs to handle any REST endpoint..."
+# }
+
+# 3. Update the content (partial update)
+curl -X PATCH http://localhost:8000/posts/1 \
+  -H "Content-Type: application/json" \
+  -H "X-Session-ID: $SESSION" \
+  -d '{"content": "Updated: This microservice now supports schema learning!"}'
+
+# Response: 200 OK
+# {
+#   "id": 1,
+#   "title": "Getting Started with Dynamic REST",
+#   "author": "Alice",
+#   "content": "Updated: This microservice now supports schema learning!"
+# }
+
+# 4. Delete the post
+curl -X DELETE http://localhost:8000/posts/1 \
+  -H "X-Session-ID: $SESSION"
+
+# Response: 204 No Content
+
+# 5. Verify deletion (should return 404)
+curl http://localhost:8000/posts/1 \
+  -H "X-Session-ID: $SESSION"
+
+# Response: 404 Not Found
+```
+
+### E-Commerce Workflow
+
+Managing products and orders:
+
+```bash
+SESSION="shop-$(uuidgen)"
+
+# 1. Add a product to inventory
+curl -X POST http://localhost:8000/products \
+  -H "Content-Type: application/json" \
+  -H "X-Session-ID: $SESSION" \
+  -d '{
+    "sku": "WIDGET-001",
+    "name": "Smart Widget",
+    "price": 99.99,
+    "stock": 50,
+    "category": "electronics"
+  }'
+
+# Response: 201 Created
+# {
+#   "id": 1,
+#   "sku": "WIDGET-001",
+#   "name": "Smart Widget",
+#   "price": 99.99,
+#   "stock": 50,
+#   "category": "electronics"
+# }
+
+# 2. Update stock quantity
+curl -X PATCH http://localhost:8000/products/1 \
+  -H "Content-Type: application/json" \
+  -H "X-Session-ID: $SESSION" \
+  -d '{"stock": 45}'
+
+# Response: 200 OK
+# {
+#   "id": 1,
+#   "sku": "WIDGET-001",
+#   "name": "Smart Widget",
+#   "price": 99.99,
+#   "stock": 45,
+#   "category": "electronics"
+# }
+
+# 3. Create an order
+curl -X POST http://localhost:8000/orders \
+  -H "Content-Type: application/json" \
+  -H "X-Session-ID: $SESSION" \
+  -d '{
+    "customer": "customer@example.com",
+    "items": [
+      {"product_id": 1, "quantity": 2}
+    ],
+    "total": 199.98,
+    "status": "pending"
+  }'
+
+# Response: 201 Created
+# {
+#   "id": 1,
+#   "customer": "customer@example.com",
+#   "items": [{"product_id": 1, "quantity": 2}],
+#   "total": 199.98,
+#   "status": "pending"
+# }
+
+# 4. Search products by category
+curl "http://localhost:8000/products/search?category=electronics" \
+  -H "X-Session-ID: $SESSION"
+
+# Response: 200 OK
+# [
+#   {
+#     "id": 1,
+#     "sku": "WIDGET-001",
+#     "name": "Smart Widget",
+#     "price": 99.99,
+#     "stock": 45,
+#     "category": "electronics"
+#   }
+# ]
+```
+
+### Task Management System
+
+Projects and tasks with status tracking:
+
+```bash
+SESSION="tasks-$(uuidgen)"
+
+# 1. Create a project
+curl -X POST http://localhost:8000/projects \
+  -H "Content-Type: application/json" \
+  -H "X-Session-ID: $SESSION" \
+  -d '{
+    "name": "Q1 Product Launch",
+    "owner": "alice@company.com",
+    "status": "active",
+    "deadline": "2025-03-31"
+  }'
+
+# Response: 201 Created
+# {
+#   "id": 1,
+#   "name": "Q1 Product Launch",
+#   "owner": "alice@company.com",
+#   "status": "active",
+#   "deadline": "2025-03-31"
+# }
+
+# 2. Add tasks to the project
+curl -X POST http://localhost:8000/tasks \
+  -H "Content-Type: application/json" \
+  -H "X-Session-ID: $SESSION" \
+  -d '{
+    "project_id": 1,
+    "title": "Design mockups",
+    "assignee": "bob@company.com",
+    "status": "todo",
+    "priority": "high"
+  }'
+
+# Response: 201 Created
+# {
+#   "id": 1,
+#   "project_id": 1,
+#   "title": "Design mockups",
+#   "assignee": "bob@company.com",
+#   "status": "todo",
+#   "priority": "high"
+# }
+
+# 3. Update task status to in_progress
+curl -X PATCH http://localhost:8000/tasks/1 \
+  -H "Content-Type: application/json" \
+  -H "X-Session-ID: $SESSION" \
+  -d '{"status": "in_progress"}'
+
+# Response: 200 OK
+# {
+#   "id": 1,
+#   "project_id": 1,
+#   "title": "Design mockups",
+#   "assignee": "bob@company.com",
+#   "status": "in_progress",
+#   "priority": "high"
+# }
+
+# 4. Mark task as done
+curl -X PATCH http://localhost:8000/tasks/1 \
+  -H "Content-Type: application/json" \
+  -H "X-Session-ID: $SESSION" \
+  -d '{"status": "done"}'
+
+# Response: 200 OK
+# {
+#   "id": 1,
+#   "project_id": 1,
+#   "title": "Design mockups",
+#   "assignee": "bob@company.com",
+#   "status": "done",
+#   "priority": "high"
+# }
+```
+
+### Complex Nested Data Structures
+
+The service handles deeply nested JSON:
+
+```bash
+SESSION="catalog-$(uuidgen)"
+
+# Create a product with complex specifications
+curl -X POST http://localhost:8000/products \
+  -H "Content-Type: application/json" \
+  -H "X-Session-ID: $SESSION" \
+  -d '{
+    "name": "Smart Watch Pro",
+    "specs": {
+      "display": {
+        "size": "1.9 inches",
+        "type": "AMOLED",
+        "resolution": "450x450"
+      },
+      "sensors": ["GPS", "heart rate", "blood oxygen", "accelerometer"],
+      "battery": {
+        "life": "18 hours",
+        "charging": "wireless"
+      }
+    },
+    "variants": [
+      {"color": "black", "stock": 10, "sku": "SWP-BLK"},
+      {"color": "silver", "stock": 5, "sku": "SWP-SLV"}
+    ],
+    "price": 399.99
+  }'
+
+# Response: 201 Created
+# {
+#   "id": 1,
+#   "name": "Smart Watch Pro",
+#   "specs": {
+#     "display": {
+#       "size": "1.9 inches",
+#       "type": "AMOLED",
+#       "resolution": "450x450"
+#     },
+#     "sensors": ["GPS", "heart rate", "blood oxygen", "accelerometer"],
+#     "battery": {
+#       "life": "18 hours",
+#       "charging": "wireless"
+#     }
+#   },
+#   "variants": [
+#     {"color": "black", "stock": 10, "sku": "SWP-BLK"},
+#     {"color": "silver", "stock": 5, "sku": "SWP-SLV"}
+#   ],
+#   "price": 399.99
+# }
+
+# Nested data is preserved and accessible
+curl http://localhost:8000/products/1 \
+  -H "X-Session-ID: $SESSION" | jq '.specs.display.type'
+
+# Output: "AMOLED"
+```
+
+### Schema Learning and Format Consistency
+
+The service learns the schema from your first POST and maintains format consistency:
+
+```bash
+SESSION="users-$(uuidgen)"
+
+# 1. First POST defines the schema
+curl -X POST http://localhost:8000/users \
+  -H "Content-Type: application/json" \
+  -H "X-Session-ID: $SESSION" \
+  -d '{
+    "name": "Alice",
+    "email": "alice@example.com",
+    "role": "admin",
+    "active": true
+  }'
+
+# Response: 201 Created
+# {
+#   "id": 1,
+#   "name": "Alice",
+#   "email": "alice@example.com",
+#   "role": "admin",
+#   "active": true
+# }
+
+# 2. Create another user (same structure)
+curl -X POST http://localhost:8000/users \
+  -H "Content-Type: application/json" \
+  -H "X-Session-ID: $SESSION" \
+  -d '{
+    "name": "Bob",
+    "email": "bob@example.com",
+    "role": "user",
+    "active": true
+  }'
+
+# 3. GET maintains the learned format
+curl http://localhost:8000/users/1 \
+  -H "X-Session-ID: $SESSION"
+
+# Response includes all fields from original schema:
+# {
+#   "id": 1,
+#   "name": "Alice",
+#   "email": "alice@example.com",
+#   "role": "admin",
+#   "active": true
+# }
+
+# 4. LIST also uses the learned format with pagination
+curl http://localhost:8000/users \
+  -H "X-Session-ID: $SESSION"
+
+# Response: 200 OK
+# {
+#   "items": [
+#     {
+#       "id": 1,
+#       "name": "Alice",
+#       "email": "alice@example.com",
+#       "role": "admin",
+#       "active": true
+#     },
+#     {
+#       "id": 2,
+#       "name": "Bob",
+#       "email": "bob@example.com",
+#       "role": "user",
+#       "active": true
+#     }
+#   ],
+#   "page": {
+#     "total": 2,
+#     "limit": null,
+#     "offset": 0
+#   }
+# }
+```
+
+**Key Insight**: The LLM learns the schema from your first write operation (POST/PUT) and includes it in subsequent prompts to maintain format consistency across GET, LIST, and UPDATE operations. This ensures predictable response structures throughout your session.
+
+### Session Isolation
+
+Each session has completely isolated data:
+
+```bash
+# Create two different sessions
+SESSION1="user1-$(uuidgen)"
+SESSION2="user2-$(uuidgen)"
+
+# Session 1: Create a product
+curl -X POST http://localhost:8000/products \
+  -H "Content-Type: application/json" \
+  -H "X-Session-ID: $SESSION1" \
+  -d '{"name": "Session 1 Product", "price": 100}'
+
+# Response: {"id": 1, "name": "Session 1 Product", "price": 100}
+
+# Session 2: Create a product (gets same ID 1, but isolated)
+curl -X POST http://localhost:8000/products \
+  -H "Content-Type: application/json" \
+  -H "X-Session-ID: $SESSION2" \
+  -d '{"name": "Session 2 Product", "price": 200}'
+
+# Response: {"id": 1, "name": "Session 2 Product", "price": 200}
+
+# Session 1 sees only its own data
+curl http://localhost:8000/products/1 \
+  -H "X-Session-ID: $SESSION1"
+
+# Response: {"id": 1, "name": "Session 1 Product", "price": 100}
+
+# Session 2 sees only its own data
+curl http://localhost:8000/products/1 \
+  -H "X-Session-ID: $SESSION2"
+
+# Response: {"id": 1, "name": "Session 2 Product", "price": 200}
+```
+
+### Batch Operations
+
+Create multiple items efficiently:
+
+```bash
+SESSION="batch-$(uuidgen)"
+
+# Create 5 items in sequence
+for i in {1..5}; do
+  curl -X POST http://localhost:8000/items \
+    -H "Content-Type: application/json" \
+    -H "X-Session-ID: $SESSION" \
+    -d "{\"name\": \"Item $i\", \"index\": $i}"
+done
+
+# List all items with pagination
+curl "http://localhost:8000/items?limit=10&offset=0" \
+  -H "X-Session-ID: $SESSION"
+
+# Response: 200 OK
+# {
+#   "items": [
+#     {"id": 1, "name": "Item 1", "index": 1},
+#     {"id": 2, "name": "Item 2", "index": 2},
+#     {"id": 3, "name": "Item 3", "index": 3},
+#     {"id": 4, "name": "Item 4", "index": 4},
+#     {"id": 5, "name": "Item 5", "index": 5}
+#   ],
+#   "page": {
+#     "total": 5,
+#     "limit": 10,
+#     "offset": 0
+#   }
+# }
+```
+
+### Error Handling
+
+The service returns proper HTTP error codes:
+
+```bash
+SESSION="errors-$(uuidgen)"
+
+# 404 on non-existent resource
+curl -i http://localhost:8000/products/99999 \
+  -H "X-Session-ID: $SESSION"
+
+# Response: 404 Not Found
+# {"error": "..."}
+
+# 404 on DELETE non-existent
+curl -i -X DELETE http://localhost:8000/products/99999 \
+  -H "X-Session-ID: $SESSION"
+
+# Response: 404 Not Found
+
+# 404 on PATCH non-existent
+curl -i -X PATCH http://localhost:8000/products/99999 \
+  -H "Content-Type: application/json" \
+  -H "X-Session-ID: $SESSION" \
+  -d '{"price": 50}'
+
+# Response: 404 Not Found
+
+# 400 on invalid request
+curl -i -X POST http://localhost:8000/products \
+  -H "Content-Type: application/json" \
+  -H "X-Session-ID: $SESSION" \
+  -d 'invalid json'
+
+# Response: 400 Bad Request
+```
+
 ## API Reference
 
 ### Catch-All Route
@@ -400,9 +891,32 @@ The sandbox returns the `REPLY` to the API layer, which converts it to a proper 
 
 ## Storage Model
 
+### File-Based Storage with Schema Learning
+
+Each session stores data in the filesystem under `/tmp/sandbox_data/<session-id>/`:
+
+```
+/tmp/sandbox_data/
+  <session-id>/
+    users.json          # Actual data
+    products.json
+    .schemas/
+      users.json        # Schema metadata
+      users.meta.json   # Auto-ID counter
+      products.json
+      products.meta.json
+```
+
+**Schema Learning**: When you create records (POST/PUT), the service:
+1. Extracts field names and structure
+2. Saves schema to `.schemas/<resource>.json`
+3. Includes schema in subsequent LLM prompts for format consistency
+
+This ensures GET, LIST, and UPDATE operations maintain the same field structure as your initial write operations.
+
 ### ResourceStore API
 
-Each collection is backed by an in-memory JSON array. The `ResourceStore` provides:
+Each collection is backed by a JSON file. The `ResourceStore` provides:
 
 ```python
 # Insert (auto-assigns ID if not present)
@@ -431,27 +945,31 @@ results = store.search({"name__icontains": "ali"})  # Case-insensitive
 
 ### Session State Structure
 
+**Data Files** (`/tmp/sandbox_data/<session-id>/<resource>.json`):
+```json
+[
+  {"id": 1, "name": "Alice", "email": "alice@example.com"},
+  {"id": 2, "name": "Bob", "email": "bob@example.com"}
+]
+```
+
+**Schema Files** (`.schemas/<resource>.json`):
 ```json
 {
-  "tenants": {
-    "session-123": {
-      "members": {
-        "auto_id": 3,
-        "items": [
-          {"id": 1, "name": "Alice"},
-          {"id": 2, "name": "Bob"}
-        ]
-      },
-      "orders": {
-        "auto_id": 1,
-        "items": []
-      }
-    }
-  }
+  "fields": ["email", "id", "name"],
+  "example": {"id": 2, "name": "Bob", "email": "bob@example.com"},
+  "updated_at": "2025-10-10T12:34:56.789012"
 }
 ```
 
-Sessions are isolated—each session has its own namespace for collections.
+**Metadata Files** (`.schemas/<resource>.meta.json`):
+```json
+{
+  "auto_id": 3
+}
+```
+
+Sessions are isolated—each session has its own directory with separate data, schema, and metadata files.
 
 ## Configuration
 
@@ -467,6 +985,7 @@ All configuration via environment variables with `LARS_` prefix:
 | `LARS_MAX_RESULT_BYTES` | 32768 | Max response size (bytes) |
 | `LARS_MAX_STDOUT_BYTES` | 4096 | Max stdout/stderr capture (bytes) |
 | `LARS_LOG_LEVEL` | INFO | Logging level |
+| `SANDBOX_DATA_ROOT` | /tmp/sandbox_data | Root directory for session file storage |
 
 Plus provider-specific API keys (not prefixed):
 
@@ -617,11 +1136,12 @@ Depends on LLM provider rate limits:
 ## Limitations
 
 1. **LLM Dependency**: Requires external API, adds latency and cost
-2. **Response Variability**: LLM may generate different code for similar requests
-3. **Memory Storage**: Sessions are in-memory only (no persistence across restarts)
+2. **Response Variability**: LLM may generate different code for similar requests (mitigated by schema learning)
+3. **Temporary Storage**: Sessions stored in `/tmp` (use persistent volume in production)
 4. **No Transactions**: Operations are not atomic across collections
 5. **Limited Query Language**: Search supports exact match and contains only
 6. **Single Tenant per Session**: No multi-tenancy within a session
+7. **No Cross-Session Queries**: Each session's data is completely isolated
 
 ## Troubleshooting
 
