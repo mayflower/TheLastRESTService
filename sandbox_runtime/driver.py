@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from .http_response import make_response
 from .router import PlanningError, plan
@@ -10,7 +10,7 @@ from .safety import SafetyError, safe_exec
 from .store import SessionStore
 
 
-def _error_response(status: int, message: str, session_state: Dict[str, Any]) -> Dict[str, Any]:
+def _error_response(status: int, message: str, session_state: dict[str, Any]) -> dict[str, Any]:
     return {
         "status": status,
         "headers": {"Content-Type": "application/json"},
@@ -20,13 +20,31 @@ def _error_response(status: int, message: str, session_state: Dict[str, Any]) ->
     }
 
 
-def handle(ctx: Dict[str, Any], session_state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def handle(ctx: dict[str, Any], session_state: dict[str, Any] | None = None) -> dict[str, Any]:
     """Entry point invoked by the host to service a request."""
 
     session_state = session_state or {}
 
+    # Extract session info early
+    session_info = ctx.get("session") or {}
+    tenant_id = session_info.get("id")
+    if not tenant_id:
+        return _error_response(400, "Missing session identifier", session_state)
+
+    # Determine resource from path segments
+    segments = ctx.get("segments", [])
+    resource_name = segments[0] if segments else "unknown"
+
+    # Create session and resource store BEFORE planning
     try:
-        planning = plan(ctx)
+        session_store = SessionStore(tenant_id)
+        resource_store = session_store.resource(resource_name)
+    except (ValueError, OSError) as exc:
+        return _error_response(500, f"Storage initialization failed: {exc}", session_state)
+
+    # Plan with schema context
+    try:
+        planning = plan(ctx, resource_store)
     except PlanningError as exc:
         return _error_response(400, str(exc), session_state)
 
@@ -34,22 +52,14 @@ def handle(ctx: Dict[str, Any], session_state: Optional[Dict[str, Any]] = None) 
     if not isinstance(code, str):
         return _error_response(500, "Planner did not return executable code", session_state)
 
-    session_info = ctx.get("session") or {}
-    tenant_id = session_info.get("id")
-    if not tenant_id:
-        return _error_response(400, "Missing session identifier", session_state)
-
-    session_store = SessionStore(session_state, tenant_id)
-    resource_store = session_store.resource(planning["resource"])
-
-    exec_globals: Dict[str, Any] = {
+    exec_globals: dict[str, Any] = {
         "ctx": ctx,
         "plan": planning,
         "store": resource_store,
         "session_store": session_store,
         "make_response": make_response,
     }
-    exec_locals: Dict[str, Any] = {}
+    exec_locals: dict[str, Any] = {}
 
     try:
         safe_exec(code, exec_globals, exec_locals)
@@ -62,7 +72,9 @@ def handle(ctx: Dict[str, Any], session_state: Optional[Dict[str, Any]] = None) 
 
     reply = exec_locals.get("REPLY") or exec_globals.get("REPLY")
     if not isinstance(reply, dict):
-        return _error_response(500, "Sandbox plan did not produce a response", session_store.snapshot())
+        return _error_response(
+            500, "Sandbox plan did not produce a response", session_store.snapshot()
+        )
 
     headers = dict(reply.get("headers") or {})
     body = reply.get("body")

@@ -16,14 +16,32 @@ class PlanningError(ValueError):
     """Raised when the router cannot derive a plan from the request context."""
 
 
-def _build_prompt(ctx: dict[str, Any]) -> str:
-    """Build the LLM prompt from request context."""
+def _build_prompt(ctx: dict[str, Any], store: Any) -> str:
+    """Build the LLM prompt from request context and learned schema."""
 
     # Create a serializable copy of context (exclude bytes)
     ctx_copy = {k: v for k, v in ctx.items() if k != "body_raw"}
     ctx_json = json.dumps(ctx_copy, indent=2)
 
+    # Get learned schema if available
+    schema_context = ""
+    try:
+        schema = store.get_schema()
+        if schema:
+            resource_name = ctx.get("segments", [])[0] if ctx.get("segments") else "resource"
+            schema_context = f"""
+**LEARNED SCHEMA for /{resource_name}:**
+Previous operations created records with these fields: {", ".join(schema["fields"])}
+Example record structure: {json.dumps(schema["example"], indent=2)}
+
+IMPORTANT: Maintain this format for consistency across all operations.
+When listing or retrieving records, ensure they include these fields.
+"""
+    except Exception:
+        pass  # Schema is optional
+
     return f"""You are a REST Planner. Analyze the HTTP request and return ONLY a JSON object (no other text).
+{schema_context}
 
 The JSON MUST have these exact fields:
 - "action": one of "create", "get", "list", "replace", "patch", "delete", or "search"
@@ -34,17 +52,32 @@ The JSON MUST have these exact fields:
 - "response_hints": {{}}
 - "code": {{"language": "python", "block": "```python\\n...\\n```"}}
 
+**RESOURCESTORE API (use ONLY these methods):**
+- `store.insert(obj: dict) -> dict` - Insert record, auto-generates ID if missing, returns record with ID
+- `store.get(identifier) -> dict | None` - Get record by ID, returns None if not found
+- `store.delete(identifier) -> bool` - Delete record, returns True if deleted, False if not found
+- `store.replace(identifier, obj: dict) -> dict | None` - Replace entire record, returns None if not found
+- `store.update(identifier, changes: dict) -> dict | None` - Merge changes into record, returns None if not found
+- `store.list(limit=None, offset=0, sort=None) -> tuple[list[dict], int]` - Returns (items, total_count)
+- `store.search(criteria: dict) -> list[dict]` - Filter records by exact match or __contains/__icontains
+- `store.get_schema() -> dict | None` - Get learned schema metadata (fields, example)
+
+**IMPORTANT:**
+- When store methods return None, that means "not found" - return 404
+- store.list() returns a TUPLE (items, total) - you MUST format this as {{"items": items, "page": {{...}}}}
+- DO NOT invent methods like store.exists() - use store.get() which returns None if not found
+- `make_response` signature: `make_response(status: int, body=None, headers=None)` (ONLY 3 args)
+
 The code block must:
 - Use `store` (ResourceStore API), `ctx` (request context), `plan`, and `make_response(status, body, headers)`
 - Set a variable called `REPLY` using make_response()
-- `make_response` signature: `make_response(status: int, body=None, headers=None)` (ONLY these 3 args, headers is a dict)
 - For POST /resource/ → `body = ctx.get("body_json"); rec = store.insert(body); REPLY = make_response(201, rec, {{"Location": f"/resource/{{rec['id']}}"}})`
-- For GET /resource/<id> → get by plan["identifier"] and return 200 or 404
-- For DELETE /resource/<id> → delete and return `make_response(204, None, {{}})` (204 with no body) or 404
-- For PUT /resource/<id> → replace and return 200 or 404
-- For PATCH /resource/<id> → update and return 200 or 404
-- For GET /resource/ → list with pagination from query params
-- For GET /resource/search?key=val → search with query params
+- For GET /resource/<id> → get by plan["identifier"]; if None return 404, else return 200
+- For DELETE /resource/<id> → delete; if False return 404, else return `make_response(204, None, {{}})`
+- For PUT /resource/<id> → replace; if None return 404, else return 200
+- For PATCH /resource/<id> → update; if None return 404, else return 200
+- For GET /resource/ → list with pagination; MUST format as {{"items": items, "page": {{"total": total, "limit": ..., "offset": ...}}}}
+- For GET /resource/search?key=val → search with query params; return list directly
 
 IMPORTANT: In the "block" field, write the Python code directly WITHOUT any markdown fencing (no ``` or ```python). Just the raw Python code.
 
@@ -117,8 +150,8 @@ def _extract_code_from_plan(plan_obj: dict[str, Any]) -> str:
     return code
 
 
-def plan(ctx: dict[str, Any]) -> dict[str, Any]:
-    """Produce a plan by calling the LLM with the request context."""
+def plan(ctx: dict[str, Any], store: Any) -> dict[str, Any]:
+    """Produce a plan by calling the LLM with the request context and schema."""
 
     method = (ctx.get("method") or "GET").upper()
     segments = list(ctx.get("segments") or [])
@@ -132,8 +165,8 @@ def plan(ctx: dict[str, Any]) -> dict[str, Any]:
     if not _RESOURCE_PATTERN.match(resource):
         raise PlanningError("Invalid resource name")
 
-    # Build prompt and call LLM
-    prompt = _build_prompt(ctx)
+    # Build prompt with schema context and call LLM
+    prompt = _build_prompt(ctx, store)
 
     try:
         llm_response = call_llm(prompt)

@@ -273,3 +273,106 @@ def test_rapid_operations(make_client) -> None:
 
     response = client.get(f"/items/{item_id}")
     assert response.status_code == 404
+
+
+def test_schema_learning_and_format_consistency(make_client) -> None:
+    """
+    Test that format is learned from POST and consistently applied to GET/LIST.
+
+    This is the key test for schema-based format consistency.
+    """
+    client = make_client()
+
+    # POST defines the schema
+    response = client.post(
+        "/users",
+        json={
+            "name": "Alice",
+            "email": "alice@example.com",
+            "role": "admin",
+            "active": True,
+        },
+    )
+    assert response.status_code == 201
+    user1 = response.json()
+    assert user1["id"] is not None
+    assert user1["name"] == "Alice"
+    user1_id = user1["id"]
+
+    # Create second user
+    response = client.post(
+        "/users",
+        json={
+            "name": "Bob",
+            "email": "bob@example.com",
+            "role": "user",
+            "active": True,
+        },
+    )
+    assert response.status_code == 201
+    user2 = response.json()
+    assert user2["id"] is not None
+    user2_id = user2["id"]
+
+    # GET should return same format
+    response = client.get(f"/users/{user1_id}")
+    assert response.status_code == 200
+    retrieved = response.json()
+    assert "name" in retrieved
+    assert "email" in retrieved
+    assert "role" in retrieved
+    assert retrieved["name"] == "Alice"
+
+    # LIST should return consistent format
+    response = client.get("/users")
+    assert response.status_code == 200
+    data = response.json()
+
+    # Should have consistent format (items/page structure)
+    assert isinstance(data, dict), "List response should be a dict"
+    assert "items" in data, "List should have 'items' key"
+    assert "page" in data, "List should have 'page' key"
+
+    items = data["items"]
+    assert len(items) == 2
+    assert all("name" in item for item in items)
+    assert all("email" in item for item in items)
+
+    # Page info should be present
+    page = data["page"]
+    assert "total" in page
+    assert page["total"] == 2
+
+
+def test_schema_persistence_across_requests(make_client) -> None:
+    """Test that schema persists and is reused across multiple requests."""
+    client = make_client()
+
+    # First request: Create with specific structure
+    response = client.post(
+        "/products",
+        json={
+            "sku": "PROD-001",
+            "name": "Widget",
+            "price": 29.99,
+            "category": "tools",
+        },
+    )
+    assert response.status_code == 201
+    product_id = response.json()["id"]
+
+    # Second request: List should use learned format
+    response = client.get("/products")
+    assert response.status_code == 200
+    data = response.json()
+    assert "items" in data
+    assert len(data["items"]) == 1
+    assert data["items"][0]["sku"] == "PROD-001"
+
+    # Third request: Get should use learned format
+    response = client.get(f"/products/{product_id}")
+    assert response.status_code == 200
+    product = response.json()
+    assert product["sku"] == "PROD-001"
+    assert "price" in product
+    assert "category" in product
