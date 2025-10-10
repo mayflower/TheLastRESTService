@@ -399,3 +399,88 @@ def test_schema_persistence_across_requests(make_client) -> None:
     assert product["sku"] == "PROD-001"
     assert "price" in product
     assert "category" in product
+
+
+def test_flexible_search_patterns(make_client) -> None:
+    """Test LLM's ability to interpret various search patterns."""
+    client = _make_session_client(make_client, "flex-search")
+
+    # Setup: Create test users
+    users = [
+        {"firstName": "Johann", "lastName": "Hartmann", "email": "j.hartmann@example.com"},
+        {"firstName": "Alice", "lastName": "Hartley", "email": "alice@example.com"},
+        {"firstName": "Bob", "lastName": "Smith", "email": "bob@test.com"},
+    ]
+    for user in users:
+        client.post("/users", json=user)
+
+    # Test 1: Prefix wildcard with /search
+    response = client.get("/users/search?lastName=Hart*")
+    assert response.status_code == 200
+    results = response.json()
+    assert isinstance(results, list)
+    assert len(results) >= 2  # Hartmann, Hartley
+
+    # Test 2: Suffix wildcard with /find
+    response = client.get("/users/find?email=*@example.com")
+    assert response.status_code == 200
+    results = response.json()
+    assert isinstance(results, list)
+    assert len(results) >= 2  # j.hartmann, alice
+
+    # Test 3: Contains wildcard with /query
+    response = client.get("/users/query?lastName=*art*")
+    assert response.status_code == 200
+    results = response.json()
+    assert isinstance(results, list)
+    assert len(results) >= 2
+
+    # Test 4: Query param style search
+    response = client.get("/users/?getByFirstName=Johann")
+    assert response.status_code == 200
+    results = response.json()
+    # Response might be list or paginated dict
+    if isinstance(results, dict):
+        results = results.get("items", [])
+    assert len(results) >= 1
+    assert results[0]["firstName"] == "Johann"
+
+    # Test 5: Alternative query param style
+    response = client.get("/users/?findByLastName=Smith")
+    assert response.status_code == 200
+    results = response.json()
+    if isinstance(results, dict):
+        results = results.get("items", [])
+    assert len(results) == 1
+    assert results[0]["lastName"] == "Smith"
+
+    # Test 6: Multiple criteria with wildcard
+    response = client.get("/users/search?firstName=Alice&email=*@example.com")
+    assert response.status_code == 200
+    results = response.json()
+    assert isinstance(results, list)
+    assert len(results) == 1
+    assert results[0]["firstName"] == "Alice"
+
+
+def test_case_insensitive_search(make_client) -> None:
+    """Test case-insensitive search capabilities."""
+    client = _make_session_client(make_client, "case-search")
+
+    client.post("/products", json={"name": "MacBook Pro", "brand": "Apple"})
+    client.post("/products", json={"name": "DELL XPS", "brand": "Dell"})
+
+    # Case-insensitive contains with wildcard
+    response = client.get("/products/search?name=*book*")
+    assert response.status_code == 200
+    results = response.json()
+    assert isinstance(results, list)
+    assert len(results) >= 1
+    # Should find "MacBook Pro" even though we searched for lowercase "book"
+
+    # Case-insensitive search via /find
+    response = client.get("/products/find?brand=*apple*")
+    assert response.status_code == 200
+    results = response.json()
+    assert isinstance(results, list)
+    assert len(results) >= 1

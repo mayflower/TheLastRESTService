@@ -773,6 +773,87 @@ curl -i -X POST http://localhost:8000/products \
 # Response: 400 Bad Request
 ```
 
+### Wildcard Searches and Flexible Endpoints
+
+The service interprets wildcards and flexible search endpoint names through pure LLM understanding:
+
+```bash
+SESSION="wildcard-$(uuidgen)"
+
+# Create test data
+curl -X POST http://localhost:8000/users \
+  -H "Content-Type: application/json" \
+  -H "X-Session-ID: $SESSION" \
+  -d '{"firstName": "Johann", "lastName": "Hartmann", "email": "j.hartmann@example.com"}'
+
+curl -X POST http://localhost:8000/users \
+  -H "Content-Type: application/json" \
+  -H "X-Session-ID: $SESSION" \
+  -d '{"firstName": "Alice", "lastName": "Hartley", "email": "alice@example.com"}'
+
+# 1. Prefix wildcard with /search endpoint
+curl "http://localhost:8000/users/search?lastName=Hart*" \
+  -H "X-Session-ID: $SESSION"
+
+# Response: 200 OK
+# [
+#   {"id": 1, "firstName": "Johann", "lastName": "Hartmann", "email": "j.hartmann@example.com"},
+#   {"id": 2, "firstName": "Alice", "lastName": "Hartley", "email": "alice@example.com"}
+# ]
+
+# 2. Suffix wildcard with /find endpoint
+curl "http://localhost:8000/users/find?email=*@example.com" \
+  -H "X-Session-ID: $SESSION"
+
+# Response: 200 OK
+# [
+#   {"id": 1, "firstName": "Johann", "lastName": "Hartmann", "email": "j.hartmann@example.com"},
+#   {"id": 2, "firstName": "Alice", "lastName": "Hartley", "email": "alice@example.com"}
+# ]
+
+# 3. Contains wildcard with /query endpoint
+curl "http://localhost:8000/users/query?lastName=*art*" \
+  -H "X-Session-ID: $SESSION"
+
+# Response: Returns all users with "art" in lastName (case-insensitive)
+
+# 4. Query parameter style search
+curl "http://localhost:8000/users/?getByFirstName=Johann" \
+  -H "X-Session-ID: $SESSION"
+
+# Response: 200 OK
+# [
+#   {"id": 1, "firstName": "Johann", "lastName": "Hartmann", "email": "j.hartmann@example.com"}
+# ]
+
+# 5. Alternative query param pattern
+curl "http://localhost:8000/users/?findByLastName=Hartmann" \
+  -H "X-Session-ID: $SESSION"
+
+# Response: 200 OK
+# [
+#   {"id": 1, "firstName": "Johann", "lastName": "Hartmann", "email": "j.hartmann@example.com"}
+# ]
+
+# 6. Multiple criteria with wildcards
+curl "http://localhost:8000/users/search?firstName=Alice&email=*@example.com" \
+  -H "X-Session-ID: $SESSION"
+
+# Response: 200 OK
+# [
+#   {"id": 2, "firstName": "Alice", "lastName": "Hartley", "email": "alice@example.com"}
+# ]
+```
+
+**How it works:**
+- The LLM interprets `*` wildcards naturally (no preprocessing)
+- Search endpoints can be named: `/search`, `/find`, `/query`, `/filter`
+- Query params like `?getByFieldName=value` are recognized as search operations
+- Wildcards translate to appropriate store filter methods:
+  - `name=Hart*` → `__startswith`
+  - `email=*@example.com` → `__endswith`
+  - `name=*art*` → `__icontains` (case-insensitive contains)
+
 ## API Reference
 
 ### Catch-All Route
@@ -939,8 +1020,10 @@ items, total = store.list(limit=10, offset=0, sort="name")
 
 # Search with filters
 results = store.search({"name": "Alice"})  # Exact match
-results = store.search({"name__contains": "Ali"})  # Substring
-results = store.search({"name__icontains": "ali"})  # Case-insensitive
+results = store.search({"name__contains": "Ali"})  # Contains (case-sensitive)
+results = store.search({"name__icontains": "ali"})  # Contains (case-insensitive)
+results = store.search({"name__startswith": "Ali"})  # Starts with
+results = store.search({"email__endswith": "@example.com"})  # Ends with
 ```
 
 ### Session State Structure

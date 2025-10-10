@@ -350,7 +350,7 @@ class ResourceStore:
 
         Args:
             criteria: Dict of field->value pairs to match
-                     Supports __contains and __icontains suffixes
+                     Supports __contains, __icontains, __startswith, __endswith suffixes
 
         Returns:
             Iterable of matching records
@@ -383,6 +383,16 @@ class ResourceStore:
                 results = [
                     item for item in results if value_str in str(item.get(field, "")).lower()
                 ]
+            elif key.endswith("__startswith"):
+                field = key[:-12]
+                value_str = str(value)
+                results = [
+                    item for item in results if str(item.get(field, "")).startswith(value_str)
+                ]
+            elif key.endswith("__endswith"):
+                field = key[:-10]
+                value_str = str(value)
+                results = [item for item in results if str(item.get(field, "")).endswith(value_str)]
             else:
                 results = [item for item in results if item.get(key) == value]
 

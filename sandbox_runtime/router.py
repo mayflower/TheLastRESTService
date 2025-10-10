@@ -59,8 +59,15 @@ The JSON MUST have these exact fields:
 - `store.replace(identifier, obj: dict) -> dict | None` - Replace entire record, returns None if not found
 - `store.update(identifier, changes: dict) -> dict | None` - Merge changes into record, returns None if not found
 - `store.list(limit=None, offset=0, sort=None) -> tuple[list[dict], int]` - Returns (items, total_count)
-- `store.search(criteria: dict) -> list[dict]` - Filter records by exact match or __contains/__icontains
+- `store.search(criteria: dict) -> list[dict]` - Filter records with suffixes: __contains, __icontains, __startswith, __endswith
 - `store.get_schema() -> dict | None` - Get learned schema metadata (fields, example)
+
+**SEARCH FILTER SUFFIXES:**
+- Exact match: `{{"name": "Alice"}}` - name equals "Alice"
+- Contains: `{{"name__contains": "Ali"}}` - name contains "Ali" (case-sensitive)
+- Case-insensitive contains: `{{"name__icontains": "ali"}}` - name contains "ali" (case-insensitive)
+- Starts with: `{{"name__startswith": "Ali"}}` - name starts with "Ali"
+- Ends with: `{{"email__endswith": "@example.com"}}` - email ends with "@example.com"
 
 **IMPORTANT:**
 - When store methods return None, that means "not found" - return 404
@@ -101,8 +108,10 @@ IMPORTANT: In the "block" field, write the Python code directly WITHOUT any mark
 **Rules:**
 
 * Collection name defaults to the first path segment (e.g., `/members/...` → `"members"`).
-* `identifier` is the second segment if present and not `"search"`.
-* `/.../search` should set `action: "search"`; parse filters from query params.
+* `identifier` is the second segment if present and not a search keyword.
+* Search operations can be named: `/search`, `/find`, `/query`, `/filter` - all mean action: "search".
+* Query params with patterns like `findBy*`, `getBy*`, `searchBy*` also indicate search intent.
+* Wildcards in query values: `name=Hart*` (prefix), `email=*@example.com` (suffix), `name=*oh*` (contains).
 * `POST /<collection>/` → `action: "create"`.
 * `GET /<collection>/` → `action: "list"`.
 * `GET /<collection>/<id>` → `action: "get"`.
@@ -117,7 +126,12 @@ IMPORTANT: In the "block" field, write the Python code directly WITHOUT any mark
 * `POST /members/` with body `{{"name": "Alice"}}` → insert into members, 201, `Location: /members/{{id}}`, return object with id.
 * `GET /members/1` → return object or 404.
 * `DELETE /members/1` → 204.
-* `GET /members/search?name=hartmann` → filter all where name == "hartmann".
+* `GET /members/search?name=hartmann` → `store.search({{"name": "hartmann"}})` - exact match.
+* `GET /users/find?name=Hart*` → `store.search({{"name__startswith": "Hart"}})` - prefix wildcard.
+* `GET /users/query?email=*@example.com` → `store.search({{"email__endswith": "@example.com"}})` - suffix wildcard.
+* `GET /products/filter?name=*widget*` → `store.search({{"name__icontains": "widget"}})` - contains wildcard (case-insensitive).
+* `GET /users/?getByFirstName=Johann` → `store.search({{"firstName": "Johann"}})` - query param style search.
+* `GET /orders/?findByStatus=pending` → `store.search({{"status": "pending"}})` - alternative query param pattern.
 
 **REQUEST CONTEXT:**
 
