@@ -95,7 +95,7 @@ This service includes:
 - ✅ Health checks (the service is healthy, we promise)
 - ✅ Docker support (containerized confidence)
 - ✅ Authentication (optional, because who needs security)
-- ✅ Comprehensive tests (12/13 passing!)
+- ✅ Comprehensive tests (39 integration tests and counting!)
 
 📖 **See [EXAMPLES.md](EXAMPLES.md) for detailed usage examples and step-by-step walkthroughs.**
 
@@ -243,7 +243,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
 docker build -t lars-metaservice -f infra/Dockerfile .
 
 # Run
-docker run -p 8000:8000 \
+docker run -p 8000:8080 \
   -e OPENAI_API_KEY="sk-..." \
   -e LARS_AUTH_TOKEN="your-token" \
   lars-metaservice
@@ -1397,7 +1397,7 @@ But seriously:
 
 1. Fork the repository
 2. Create a feature branch
-3. Add tests (aim for 12/13 passing)
+3. Add tests (we have 39, let's keep the streak going)
 4. Make sure the LLM still understands your changes
 5. Submit a pull request
 
