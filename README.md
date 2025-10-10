@@ -13,7 +13,7 @@ Why write code when an LLM can write it for you? Every. Single. Time. On-demand.
 This isn't your grandfather's REST API. This is a service that:
 
 1. **Accepts any HTTP request** you throw at it (well, almost any)
-2. **Asks an LLM what you probably meant** (GPT-4 or Claude, your choice)
+2. **Asks an LLM what you probably meant** (GPT-5 or Claude Sonnet 4.5, your choice)
 3. **Generates Python code on-the-fly** to handle your request
 4. **Executes it in a sandbox** (don't worry, it's totally safe™)
 5. **Returns proper REST responses** (201s, 404s, all the classics)
@@ -39,7 +39,7 @@ Why spend months building a microservice landscape when you can deploy **one ser
 When a request arrives, here's what happens:
 
 1. **Request Reception**: Your HTTP call enters the universal endpoint `/{literally_anything}`
-2. **LLM Planning**: GPT-4 or Claude looks at your request and thinks *"Hmm, they probably want to create a user"*
+2. **LLM Planning**: GPT-5 or Claude Sonnet 4.5 looks at your request and thinks *"Hmm, they probably want to create a user"*
 3. **Code Generation**: The LLM writes Python code. From scratch. Right now.
 4. **Safety Validation**: AST inspection ensures the code won't mine Bitcoin or email your secrets
 5. **Execution**: The code runs in a sandbox with access to file-based storage
@@ -1340,7 +1340,7 @@ Depends on LLM provider rate limits:
 ### Optimization Tips
 
 1. **Cache LLM responses** for identical requests (not implemented)
-2. **Use faster models** (gpt-4o-mini vs gpt-4)
+2. **Use faster models** (gpt-5-mini vs gpt-5)
 3. **Batch operations** when possible
 4. **Scale horizontally** (stateless after session binding)
 5. **Use connection pooling** for LLM API calls
@@ -1364,7 +1364,7 @@ Depends on LLM provider rate limits:
 **Fix**:
 - Check LLM provider status
 - Verify API key is valid
-- Try different model (gpt-4 more reliable than gpt-3.5)
+- Try different model (gpt-5 or claude-sonnet-4.5 recommended)
 
 ### "Generated code rejected: Unsupported syntax"
 
